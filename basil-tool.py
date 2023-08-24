@@ -50,13 +50,14 @@ def read_write_binary(tmp_dir:str, filename: str) -> str:
         if old_hash != hex_hash:
             logging.info("Error: binary mismatch, got the binary from a different compilation?")
     else:
-        logging.info("Writing binary")
+        logging.info("Writing binary %s", bin_file)
         with open(hash_file, 'w') as f:
             f.write(hex_hash)
         with open(bin_file, 'wb') as f:
             f.write(content)
 
-    logging.info("Loaded binary: %s", hex_hash)
+    logging.info("Loaded binary: %s %s", hex_hash, bin_file)
+    print("binary", content)
     return bin_file
 
 
@@ -83,9 +84,7 @@ def run_bap_lift(tmp_dir: str, use_asli: bool):
 
 def run_readelf(tmp_dir):
     command = [READELF_BIN, "-s", "-r", "-W", bin_name(tmp_dir)]
-    res = subprocess.run(command, capture_output=True)
-    print(res.stdout)
-    print(res.stderr)
+    res = subprocess.run(command, capture_output=True, check=True)
     readelf_file = f"{tmp_dir}/out.relf"
 
     with open(readelf_file, "w") as f:
@@ -111,17 +110,16 @@ def run_basil(tmp_dir: str):
 
     return outputs
 
-def run_boogie(tmp_dir: str, source_dir):
+def run_boogie(tmp_dir: str, args: str):
     outputs = run_basil(tmp_dir)
-    outputs.update(run_bap_lift(tmp_dir, False))
-    outputs.update(run_readelf(tmp_dir))
 
     boogie_file = outputs['boogie']
     adt_file = outputs['adt']
     bir_file = outputs['bir']
     readelf_file = outputs['relf']
 
-    command = ["boogie", boogie_file]
+    command = (f"/usr/bin/podman run -v {tmp_dir}:{tmp_dir} -w {tmp_dir} ghcr.io/uq-pac/basil-dev boogie {boogie_file} ").split(" ")
+    command += args.split(" ")
     res = subprocess.run(command, capture_output=True, check=True)
 
     return outputs
@@ -139,16 +137,24 @@ def main(tmp_dir):
                     prog='BasilTool',
                     description='Runs Basil and Associated Tools',
                     epilog='')
-    parser.add_argument('-d', '--directory',  required=True, help="Used to identify the compilation")
+    parser.add_argument('sourcefile')
+    parser.add_argument('-d', '--directory',  required=False, help="Used to identify the compilation")
     parser.add_argument('-t', '--tool', help="Which tool to run, basil/bap/readelf", default="basil")
     parser.add_argument('-o', '--output', help="Which output to send to stdout", default="default")
+    parser.add_argument('-a', '--args', help="Extra args to pass to the tool")
 
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
     args = parser.parse_args()
     logging.debug(args)
-    #tmp_dir = get_tempdir(args.directory)
-    read_write_binary(tmp_dir, "fname")
+    data = None
+    with open(args.sourcefile, 'rb') as f:
+        data = f.read()
+    with open(bin_name(tmp_dir), 'wb') as f:
+        f.write(data)
+
+# TODO: give basil spec files
+# TODO: run boogie
 
     outputs = {}
     if args.tool == "readelf":
@@ -157,6 +163,8 @@ def main(tmp_dir):
         outputs = run_bap_lift(tmp_dir, False)
     elif args.tool == "basil":
         outputs = run_basil(tmp_dir)
+    elif args.tool == "boogie":
+        outputs = run_boogie(tmp_dir, args.args)
     else:
         print("Allowed tools: [readelf, bap, basil]")
         return 1
