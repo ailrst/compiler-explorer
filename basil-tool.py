@@ -62,7 +62,7 @@ def read_write_binary(tmp_dir:str, filename: str) -> str:
 
 
 def run_bap_lift(tmp_dir: str, use_asli: bool):
-
+    logging.info("Bap")
     adtfile = f"{tmp_dir}/out.adt"
     birfile = f"{tmp_dir}/out.bir"
 
@@ -78,13 +78,19 @@ def run_bap_lift(tmp_dir: str, use_asli: bool):
     command += args
     logging.info("command: %s", command)
     if not (os.path.exists(adtfile) and os.path.exists(birfile)):
-        subprocess.run(command, check=True)
+        res = subprocess.run(command, check=True)
+        logging.info(res.stdout)
+        logging.info(res.stderr)
 
     return {"adt": adtfile, "bir": birfile, "default": birfile}
 
 def run_readelf(tmp_dir):
+    logging.info("Readelf")
     command = [READELF_BIN, "-s", "-r", "-W", bin_name(tmp_dir)]
     res = subprocess.run(command, capture_output=True, check=True)
+    logging.info(res.stdout)
+    logging.info(res.stderr)
+
     readelf_file = f"{tmp_dir}/out.relf"
 
     with open(readelf_file, "w") as f:
@@ -92,8 +98,9 @@ def run_readelf(tmp_dir):
 
     return {"relf": readelf_file, "default": readelf_file}
 
-def run_basil(tmp_dir: str):
-    boogie_file = f"{tmp_dir}/out.bpl"
+def run_basil(tmp_dir: str, spec: str | None =None):
+    logging.info("Basil")
+    boogie_file = f"{tmp_dir}/boogie_out.bpl"
     outputs = {"boogie": boogie_file}
 
     # dependencies
@@ -104,13 +111,20 @@ def run_basil(tmp_dir: str):
     adtfile = outputs['adt']
     birfile = outputs['bir']
     readelf_file = outputs['relf']
-
-    command = f"java -jar /home/am/Documents/programming/2023/bil-to-boogie-translator/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar".split(" ") + [adtfile, readelf_file, boogie_file]
-    res = subprocess.run(command, capture_output=True, check=True)
+    os.chdir(tmp_dir) # so  the output file is in the right dir
+    command = f"java -jar /home/am/Documents/programming/2023/bil-to-boogie-translator/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar".split(" ")
+    files = [adtfile, readelf_file]
+    if spec:
+        files = [adtfile, readelf_file, spec]
+    command += files
+    logging.info(command)
+    res = subprocess.run(command, capture_output=True, check=False)
+    logging.info(res.stdout.decode('utf-8'))
+    logging.info(res.stderr.decode('utf-8'))
 
     return outputs
 
-def run_boogie(tmp_dir: str, args: str):
+def run_boogie(tmp_dir: str, args: str | None = None):
     outputs = run_basil(tmp_dir)
 
     boogie_file = outputs['boogie']
@@ -121,6 +135,8 @@ def run_boogie(tmp_dir: str, args: str):
     command = (f"/usr/bin/podman run -v {tmp_dir}:{tmp_dir} -w {tmp_dir} ghcr.io/uq-pac/basil-dev boogie {boogie_file} ").split(" ")
     command += args.split(" ")
     res = subprocess.run(command, capture_output=True, check=True)
+    logging.info(res.stdout)
+    logging.info(res.stderr)
 
     return outputs
 
@@ -141,20 +157,44 @@ def main(tmp_dir):
     parser.add_argument('-d', '--directory',  required=False, help="Used to identify the compilation")
     parser.add_argument('-t', '--tool', help="Which tool to run, basil/bap/readelf", default="basil")
     parser.add_argument('-o', '--output', help="Which output to send to stdout", default="default")
-    parser.add_argument('-a', '--args', help="Extra args to pass to the tool")
+    parser.add_argument('-a', '--args', help="Extra args to pass to the tool", default=[])
+    parser.add_argument('-s', '--spec', help="Specfile for basil")
+    parser.add_argument('-v', '--verbose', help="Enable log output", action="store_true")
 
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
     args = parser.parse_args()
-    logging.debug(args)
+
+    if args.verbose:
+        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+    else:
+        logging.basicConfig(stream=sys.stderr, level=logging.ERROR)
+
+
+    logging.info(args)
+
+
     data = None
     with open(args.sourcefile, 'rb') as f:
         data = f.read()
     with open(bin_name(tmp_dir), 'wb') as f:
         f.write(data)
 
+
+    # Copy spec
+    spec = None
+    if (args.spec):
+        spec = f"{tmp_dir}/in.spec"
+        specfile = None
+        with open(os.path.join(args.directory, args.spec), 'r') as f:
+            specfile = f.read()
+            print(specfile)
+        with open(spec, 'w') as f:
+            f.write(specfile)
+
+
 # TODO: give basil spec files
 # TODO: run boogie
+# TODO: primus lifter and asli lifter
 
     outputs = {}
     if args.tool == "readelf":
@@ -162,19 +202,22 @@ def main(tmp_dir):
     elif args.tool == "bap":
         outputs = run_bap_lift(tmp_dir, False)
     elif args.tool == "basil":
-        outputs = run_basil(tmp_dir)
+        spec = None
+        outputs = run_basil(tmp_dir, spec)
     elif args.tool == "boogie":
         outputs = run_boogie(tmp_dir, args.args)
     else:
         print("Allowed tools: [readelf, bap, basil]")
-        return 1
+        exit(1)
 
     if args.output not in outputs:
         print("Output unavailable, allowed are:", ", ".join(outputs.keys()))
-        return 1
+        exit(1)
+
     with open(outputs[args.output], 'r') as f:
+        logging.info("Printinng output: %s", outputs[args.output])
         print(f.read())
-    return 0
+    exit(0)
 
 
 
