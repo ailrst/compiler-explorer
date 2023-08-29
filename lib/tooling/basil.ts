@@ -23,43 +23,23 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 import fs from 'fs-extra';
-import path from 'path';
 
 import {logger} from '../logger.js';
 import {BaseTool} from './base-tool.js';
-import {Library} from '../../types/libraries/libraries.interfaces.js';
+import {ExecutionOptions} from '../../types/compilation/compilation.interfaces.js';
 
 export class BasilTool extends BaseTool {
     static get key() {
         return 'basil-tool';
     }
 
-    async localRunTool(
-        compilationInfo: Record<any, any>,
-        inputFilepath?: string,
-        args?: string[],
-        stdin?: string,
-        supportedLibraries?: Record<string, Library>,
-    ) {
-        const execOptions = this.getDefaultExecOptions();
-        execOptions.timeoutMs = 300000; // 5 minutes
-        if (inputFilepath) execOptions.customCwd = path.dirname(inputFilepath);
-        execOptions.input = stdin;
-
-        args = args || [];
-        logger.info('options', this.tool.options);
-        if (this.addOptionsToToolArgs) args = this.tool.options.concat(args);
-
-        const exeDir = path.dirname(this.tool.exe);
-
-        logger.info('args', args);
-        try {
-            const result = await this.exec(this.tool.exe, args, execOptions);
-            return this.convertResult(result, inputFilepath, exeDir);
-        } catch (e) {
-            logger.error('Error while running tool: ', e);
-            return this.createErrorResponse('Error while running tool');
-        }
+    override getDefaultExecOptions(): ExecutionOptions {
+        logger.info('Using execoptions');
+        return {
+            timeoutMs: this.env.ceProps('compileTimeoutMs', 300000) as number,
+            maxErrorOutput: this.env.ceProps('max-error-output', 5000) as number,
+            wrapper: this.env.compilerProps('compiler-wrapper'),
+        };
     }
 
     override async runTool(compilationInfo: Record<any, any>, inputFilepath?: string, args?: string[]) {
@@ -75,7 +55,6 @@ export class BasilTool extends BaseTool {
         if (await fs.pathExists(compilationInfo.executableFilename)) {
             return super.runTool(compilationInfo, compilationInfo.executableFilename, args);
         }
-        //return this.createErrorResponse(`${this.tool.name ?? 'tool'} requires executable`);
         return super.runTool(compilationInfo, compilationInfo.outputFilename, args);
     }
 }
