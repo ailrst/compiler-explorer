@@ -42,6 +42,7 @@ export class BasilTool extends BaseTool {
         supportedLibraries?: Record<string, Library>,
     ) {
         const execOptions = this.getDefaultExecOptions();
+        execOptions.timeoutMs = 300000; // 5 minutes
         if (inputFilepath) execOptions.customCwd = path.dirname(inputFilepath);
         execOptions.input = stdin;
 
