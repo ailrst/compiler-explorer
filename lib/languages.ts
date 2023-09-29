@@ -64,6 +64,17 @@ const definitions: Record<LanguageKey, LanguageDefinition> = {
         previewFilter: /^\s*#include/,
         monacoDisassembly: null,
     },
+    boogie: {
+        name: 'Boogie IVL',
+        monaco: 'cppp',
+        extensions: ['.jakt'],
+        alias: [],
+        logoUrl: '',
+        logoUrlDark: null,
+        formatter: null,
+        previewFilter: null,
+        monacoDisassembly: 'cppp',
+    },
     ada: {
         name: 'Ada',
         monaco: 'ada',

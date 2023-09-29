@@ -23,6 +23,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 export type LanguageKey =
+    | 'boogie'
     | 'ada'
     | 'analysis'
     | 'assembly'
