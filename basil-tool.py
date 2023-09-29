@@ -107,7 +107,7 @@ def run_readelf(tmp_dir):
 def run_basil(tmp_dir: str, spec: str | None =None):
     logging.info("Basil")
     boogie_file = f"{tmp_dir}/boogie_out.bpl"
-    outputs = {"boogie": boogie_file}
+    outputs = {"boogie": boogie_file, "basil-il": "before-analysis.il.txt"}
 
     # dependencies
     outputs.update(run_bap_lift(tmp_dir, False))
@@ -119,7 +119,7 @@ def run_basil(tmp_dir: str, spec: str | None =None):
     readelf_file = outputs['relf']
     os.chdir(tmp_dir) # so  the output file is in the right dir
     command = [JAVA_BIN, "-jar", BASIL_JAR]
-    files = ["-a", adtfile, "-r", readelf_file, "-o", boogie_file]
+    files = ["-a", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il']
     if spec:
         files += ["-s", spec]
         outputs["spec"] = spec 
@@ -132,7 +132,7 @@ def run_basil(tmp_dir: str, spec: str | None =None):
     return outputs
 
 
-def run_boogie_only(input_temp_dir, tmp_dir: str, args: list = [], spec = None):
+def run_boogie_only(tmp_dir: str, args: list = [], spec = None):
     binary = bin_name(tmp_dir)
 
     boogie_in = f"{tmp_dir}/boogie-in-source.bpl"
@@ -154,12 +154,8 @@ def run_boogie_only(input_temp_dir, tmp_dir: str, args: list = [], spec = None):
     boogie_file = f"{tmp_dir}/out.boogie"
 
     with open(boogie_file, "w") as f:
-        f.write(res.stdout.decode('utf-8'))
         f.write(res.stderr.decode('utf-8'))
-
-    with open(os.path.join(input_temp_dir, "stdout"), "w") as f:
         f.write(res.stdout.decode('utf-8'))
-        f.write(res.stderr.decode('utf-8'))
 
     return {"boogie": boogie_file, "default": boogie_file}
 
@@ -271,8 +267,7 @@ def main(tmp_dir):
     elif args.tool == "boogie":
         outputs = run_boogie(tmp_dir, args.args, spec)
     elif args.tool == "boogie-source":
-        #input_temp_dir = os.path.dirname(args.sourcefile)
-        outputs = run_boogie_only(args.directory, tmp_dir, args.args, spec)
+        outputs = run_boogie_only(tmp_dir, args.args, spec)
     else:
         print("Allowed tools: [readelf, bap, basil, boogie, boogie-source]")
         exit(1)
@@ -284,9 +279,13 @@ def main(tmp_dir):
     with open(outputs[args.output], 'r') as f:
         logging.info("Printinng output: %s", outputs[args.output])
         print(f.read())
+
+    if args.directory:
+        with open(os.path.join(args.directory, "stdout"), "w") as foutfile:
+            with open(outputs[args.output], 'r') as fwrite:
+                foutfile.write(fwrite.read())
+
     exit(0)
-
-
 
 
 if __name__ == "__main__":
