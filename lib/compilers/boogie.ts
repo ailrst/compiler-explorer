@@ -7,6 +7,6 @@ export class C3Compiler extends BaseCompiler {
     }
 
     override optionsForFilter(filters: ParseFiltersAndOutputOptions, outputFilename: string) {
-        return ['/timeLimit:300'];
+        return [];
     }
 }
