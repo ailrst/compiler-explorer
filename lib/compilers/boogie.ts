@@ -2,7 +2,7 @@ import type {ParseFiltersAndOutputOptions} from '../../types/features/filters.in
 import {BaseCompiler} from '../base-compiler.js';
 import path from 'path';
 
-export class C3Compiler extends BaseCompiler {
+export class BoogieCompiler extends BaseCompiler {
     static get key() {
         return 'boogie';
     }
