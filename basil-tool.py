@@ -6,9 +6,14 @@ import hashlib
 import os
 import sys
 import logging
+import shutil
 
-READELF_BIN="/usr/bin/readelf"
-BASIL_JAR="/home/am/Documents/programming/2023/bil-to-boogie-translator/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar $WORKDIR/out.adt"
+READELF_BIN=shutil.which("readelf")
+JAVA_BIN=shutil.which("java")
+BOOGIE_BIN=shutil.which("boogie")  # /root/.dotnet/tools/boogie
+BAP_BIN=shutil.which("bap")
+BASIL_JAR="/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar"
+
 DEFAULT_LOGGER_NAME = 'default_logger'
 
 
@@ -40,6 +45,7 @@ def read_write_binary(tmp_dir:str, filename: str) -> str:
     bin_hash.update(content)
     bin_file = bin_name(tmp_dir)
 
+
     hash_file = os.path.join(tmp_dir, "bin_hash.sha256")
     hex_hash = bin_hash.hexdigest()
 
@@ -68,7 +74,7 @@ def run_bap_lift(tmp_dir: str, use_asli: bool):
 
     binary = bin_name(tmp_dir)
 
-    command = (f"/usr/bin/podman run -v {tmp_dir}:{tmp_dir} -w {tmp_dir} ghcr.io/uq-pac/basil-dev bap {binary}").split(" ")
+    command = (f"{BAP_BIN} {binary}").split(" ")
     args = [ "-d", f"adt:{adtfile}", "-d", f"bir:{birfile}"]
     #if use_asli:
     #    args += ["--primus-lisp-semantics=disable"]
@@ -112,10 +118,11 @@ def run_basil(tmp_dir: str, spec: str | None =None):
     birfile = outputs['bir']
     readelf_file = outputs['relf']
     os.chdir(tmp_dir) # so  the output file is in the right dir
-    command = f"java -jar /home/am/Documents/programming/2023/bil-to-boogie-translator/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar".split(" ")
-    files = [adtfile, readelf_file]
+    command = [JAVA_BIN, "-jar", BASIL_JAR]
+    files = ["-a", adtfile, "-r", readelf_file, "-o", boogie_file]
     if spec:
-        files = [adtfile, readelf_file, spec]
+        files += ["-s", spec]
+        outputs["spec"] = spec 
     command += files
     logging.info(command)
     res = subprocess.run(command, capture_output=True, check=False)
@@ -124,19 +131,73 @@ def run_basil(tmp_dir: str, spec: str | None =None):
 
     return outputs
 
-def run_boogie(tmp_dir: str, args: str | None = None):
-    outputs = run_basil(tmp_dir)
+
+def run_boogie_only(input_temp_dir, tmp_dir: str, args: list = [], spec = None):
+    binary = bin_name(tmp_dir)
+
+    boogie_in = f"{tmp_dir}/boogie-in-source.bpl"
+
+    with open(binary, 'r') as f: # because boogie checks the file extension
+        with open(boogie_in, 'w') as o:
+            t = f.read()
+            o.write(t)
+
+    command = [BOOGIE_BIN, boogie_in]
+    command += args
+    logging.info("command: %s", command)
+
+
+    res = subprocess.run(command, capture_output=True)
+    logging.info(res.stdout)
+    logging.info(res.stderr)
+
+    boogie_file = f"{tmp_dir}/out.boogie"
+
+    with open(boogie_file, "w") as f:
+        f.write(res.stdout.decode('utf-8'))
+        f.write(res.stderr.decode('utf-8'))
+
+    with open(os.path.join(input_temp_dir, "stdout"), "w") as f:
+        f.write(res.stdout.decode('utf-8'))
+        f.write(res.stderr.decode('utf-8'))
+
+    return {"boogie": boogie_file, "default": boogie_file}
+
+
+def run_boogie(tmp_dir: str, args: list = [], spec = None):
+    outputs = run_basil(tmp_dir, spec)
 
     boogie_file = outputs['boogie']
     adt_file = outputs['adt']
     bir_file = outputs['bir']
     readelf_file = outputs['relf']
 
-    command = (f"/usr/bin/podman run -v {tmp_dir}:{tmp_dir} -w {tmp_dir} ghcr.io/uq-pac/basil-dev boogie {boogie_file} ").split(" ")
-    command += args.split(" ")
+    command = [BOOGIE_BIN, boogie_file]
+    command += args
     res = subprocess.run(command, capture_output=True, check=True)
-    logging.info(res.stdout)
-    logging.info(res.stderr)
+    out = res.stdout.decode('utf-8')
+    err = res.stderr.decode('utf-8')
+
+    
+    boogie_outbothfile = f"{tmp_dir}/boogie_stdout_stderr"
+    boogie_out = f"{tmp_dir}/boogie_stdout"
+    boogie_err = f"{tmp_dir}/boogie_stderr"
+
+    with open(boogie_out, 'w') as f:
+        f.write(out)
+
+    with open(boogie_err, 'w') as f:
+        f.write(err)
+
+    with open(boogie_outbothfile, 'w') as f:
+        f.write(out)
+        f.write(err)
+
+    outputs.update({
+        "boogie_stdout": boogie_out, 
+        "boogie_stderr": boogie_err,
+        "boogie_stdout_stderr": boogie_outbothfile
+        })
 
     return outputs
 
@@ -165,7 +226,7 @@ def main(tmp_dir):
     args = parser.parse_args()
 
     if args.verbose:
-        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
+        logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     else:
         logging.basicConfig(stream=sys.stderr, level=logging.ERROR)
 
@@ -187,7 +248,7 @@ def main(tmp_dir):
         specfile = None
         with open(os.path.join(args.directory, args.spec), 'r') as f:
             specfile = f.read()
-            print(specfile)
+            #print(specfile)
         with open(spec, 'w') as f:
             f.write(specfile)
 
@@ -197,17 +258,23 @@ def main(tmp_dir):
 # TODO: primus lifter and asli lifter
 
     outputs = {}
+
+    if (args.args):
+        args.args = args.args.split(" ")
+
     if args.tool == "readelf":
         outputs = run_readelf(tmp_dir)
     elif args.tool == "bap":
         outputs = run_bap_lift(tmp_dir, False)
     elif args.tool == "basil":
-        spec = None
         outputs = run_basil(tmp_dir, spec)
     elif args.tool == "boogie":
-        outputs = run_boogie(tmp_dir, args.args)
+        outputs = run_boogie(tmp_dir, args.args, spec)
+    elif args.tool == "boogie-source":
+        #input_temp_dir = os.path.dirname(args.sourcefile)
+        outputs = run_boogie_only(args.directory, tmp_dir, args.args, spec)
     else:
-        print("Allowed tools: [readelf, bap, basil]")
+        print("Allowed tools: [readelf, bap, basil, boogie, boogie-source]")
         exit(1)
 
     if args.output not in outputs:

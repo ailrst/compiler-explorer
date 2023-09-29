@@ -12,6 +12,6 @@ export class BoogieCompiler extends BaseCompiler {
     }
 
     override optionsForFilter(filters: ParseFiltersAndOutputOptions, outputFilename: string) {
-        return [];
+        return ['-d', path.dirname(outputFilename)];
     }
 }
