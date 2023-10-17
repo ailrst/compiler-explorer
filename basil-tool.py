@@ -12,7 +12,7 @@ READELF_BIN=shutil.which("readelf")
 JAVA_BIN=shutil.which("java")
 BOOGIE_BIN=shutil.which("boogie")  # /root/.dotnet/tools/boogie
 BAP_BIN=shutil.which("bap")
-BASIL_JAR="/target/scala-3.1.0/wptool-boogie-assembly-0.0.1.jar"
+BASIL_JAR="/target/scala-3.3.1/wptool-boogie-assembly-0.0.1.jar"
 
 DEFAULT_LOGGER_NAME = 'default_logger'
 
@@ -122,7 +122,7 @@ def run_basil(tmp_dir: str, spec: str | None =None):
     files = ["-a", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il']
     if spec:
         files += ["-s", spec]
-        outputs["spec"] = spec 
+        outputs["spec"] = spec
     command += files
     logging.info(command)
     res = subprocess.run(command, capture_output=True, check=False)
@@ -174,7 +174,7 @@ def run_boogie(tmp_dir: str, args: list = [], spec = None):
     out = res.stdout.decode('utf-8')
     err = res.stderr.decode('utf-8')
 
-    
+
     boogie_outbothfile = f"{tmp_dir}/boogie_stdout_stderr"
     boogie_out = f"{tmp_dir}/boogie_stdout"
     boogie_err = f"{tmp_dir}/boogie_stderr"
@@ -190,7 +190,7 @@ def run_boogie(tmp_dir: str, args: list = [], spec = None):
         f.write(err)
 
     outputs.update({
-        "boogie_stdout": boogie_out, 
+        "boogie_stdout": boogie_out,
         "boogie_stderr": boogie_err,
         "boogie_stdout_stderr": boogie_outbothfile
         })
