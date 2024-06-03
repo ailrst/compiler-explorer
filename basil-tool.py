@@ -11,8 +11,9 @@ import shutil
 READELF_BIN=shutil.which("readelf")
 JAVA_BIN=shutil.which("java")
 BOOGIE_BIN=shutil.which("boogie")  # /root/.dotnet/tools/boogie
-BAP_BIN=shutil.which("bap")
-BASIL_JAR="/target/scala-3.3.1/wptool-boogie-assembly-0.0.1.jar"
+BAP_BIN=shutil.which("bap-aslp")
+MODEL_TOOL_BIN="/home/am/Documents/programming/2023/basil-tools/modelTool/bin/Debug/net6.0/linux-x64/modelTool"
+BASIL_JAR="/tmp/wptool-boogie-assembly-0.0.1.jar"
 
 DEFAULT_LOGGER_NAME = 'default_logger'
 
@@ -104,10 +105,10 @@ def run_readelf(tmp_dir):
 
     return {"relf": readelf_file, "default": readelf_file}
 
-def run_basil(tmp_dir: str, spec: str | None =None):
+def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
     logging.info("Basil")
     boogie_file = f"{tmp_dir}/boogie_out.bpl"
-    outputs = {"boogie": boogie_file, "basil-il": "before-analysis.il.txt"}
+    outputs = {"boogie": boogie_file, "basil-il": boogie_file + ".il"}
 
     # dependencies
     outputs.update(run_bap_lift(tmp_dir, False))
@@ -119,7 +120,8 @@ def run_basil(tmp_dir: str, spec: str | None =None):
     readelf_file = outputs['relf']
     os.chdir(tmp_dir) # so  the output file is in the right dir
     command = [JAVA_BIN, "-jar", BASIL_JAR]
-    files = ["-a", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il']
+    files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il']
+
     if spec:
         files += ["-s", spec]
         outputs["spec"] = spec
@@ -142,14 +144,19 @@ def run_boogie_only(tmp_dir: str, args: list = [], spec = None):
             t = f.read()
             o.write(t)
 
+    modelfile = "counterexample.model"
     command = [BOOGIE_BIN, boogie_in]
-    command += args
+    command += args + ['/mv', modelfile]
     logging.info("command: %s", command)
 
 
     res = subprocess.run(command, capture_output=True)
-    logging.info(res.stdout)
-    logging.info(res.stderr)
+    logging.info(res.stdout.decode('utf-8'))
+    logging.info(res.stderr.decode('utf-8'))
+
+    output = {"boogie": boogie_file, "default": boogie_file}
+    if "error" in res.stdout.decode('utf-8'):
+        output.update({"counterexample_model": modelfile})
 
     boogie_file = f"{tmp_dir}/out.boogie"
 
@@ -157,23 +164,23 @@ def run_boogie_only(tmp_dir: str, args: list = [], spec = None):
         f.write(res.stderr.decode('utf-8'))
         f.write(res.stdout.decode('utf-8'))
 
-    return {"boogie": boogie_file, "default": boogie_file}
+    return output
 
 
 def run_boogie(tmp_dir: str, args: list = [], spec = None):
-    outputs = run_basil(tmp_dir, spec)
+    outputs = run_basil(tmp_dir, args, spec)
 
     boogie_file = outputs['boogie']
     adt_file = outputs['adt']
     bir_file = outputs['bir']
     readelf_file = outputs['relf']
+    model_file = "counterexample.model"
 
     command = [BOOGIE_BIN, boogie_file]
-    command += args
+    command += args + ['/mv', model_file]
     res = subprocess.run(command, capture_output=True, check=True)
     out = res.stdout.decode('utf-8')
     err = res.stderr.decode('utf-8')
-
 
     boogie_outbothfile = f"{tmp_dir}/boogie_stdout_stderr"
     boogie_out = f"{tmp_dir}/boogie_stdout"
@@ -192,8 +199,38 @@ def run_boogie(tmp_dir: str, args: list = [], spec = None):
     outputs.update({
         "boogie_stdout": boogie_out,
         "boogie_stderr": boogie_err,
-        "boogie_stdout_stderr": boogie_outbothfile
+        "boogie_stdout_stderr": boogie_outbothfile,
         })
+
+    if "error" in out:
+        outputs.update({"counterexample_model": model_file})
+
+
+    return outputs
+
+def pretty_print_counterexample(tmp_dir: str, args: list = [], spec = None):
+    outputs = run_boogie(tmp_dir, args, spec)
+
+    result = ""
+
+    with open(outputs['boogie_stdout_stderr'], 'r') as i:
+        result += i.read()
+        result += "\n"
+
+    if ('counterexample_model' in outputs):
+        command = [MODEL_TOOL_BIN, outputs['counterexample_model']]
+        res = subprocess.run(command, capture_output=True, check=False)
+        logging.info(res.stdout.decode('utf-8'))
+        logging.info(res.stderr.decode('utf-8'))
+        result += res.stdout.decode('utf-8')
+        result += res.stderr.decode('utf-8')
+
+    ce_file = "modelTool_stdout"
+    outputs.update({'counterexample': ce_file, "default": ce_file})
+
+
+    with open(ce_file, "w") as f:
+        f.write(result)
 
     return outputs
 
@@ -201,7 +238,6 @@ def run_boogie(tmp_dir: str, args: list = [], spec = None):
 def cleanup_tempdirs():
     """
     Because temporary directories are shared between invocations we need to cleanup those that are no longer needed.
-
     """
     return 0
 
@@ -226,9 +262,7 @@ def main(tmp_dir):
     else:
         logging.basicConfig(stream=sys.stderr, level=logging.ERROR)
 
-
     logging.info(args)
-
 
     data = None
     with open(args.sourcefile, 'rb') as f:
@@ -263,13 +297,15 @@ def main(tmp_dir):
     elif args.tool == "bap":
         outputs = run_bap_lift(tmp_dir, False)
     elif args.tool == "basil":
-        outputs = run_basil(tmp_dir, spec)
+        outputs = run_basil(tmp_dir, args.args, spec)
     elif args.tool == "boogie":
         outputs = run_boogie(tmp_dir, args.args, spec)
     elif args.tool == "boogie-source":
         outputs = run_boogie_only(tmp_dir, args.args, spec)
+    elif args.tool == "boogie-counterexample":
+        outputs = pretty_print_counterexample(tmp_dir, args.args, spec)
     else:
-        print("Allowed tools: [readelf, bap, basil, boogie, boogie-source]")
+        print("Allowed tools: [readelf, bap, basil, boogie, boogie-source, 'boogie-counterexample]")
         exit(1)
 
     if args.output not in outputs:
