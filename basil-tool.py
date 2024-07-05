@@ -120,8 +120,8 @@ def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
     birfile = outputs['bir']
     readelf_file = outputs['relf']
     os.chdir(tmp_dir) # so  the output file is in the right dir
-    command = [JAVA_BIN, "-jar", BASIL_JAR]
-    files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il', 'basilout.il']
+    command = [BASIL_BIN]
+    files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il', outputs['basil-il']]
 
     if spec:
         files += ["-s", spec]
