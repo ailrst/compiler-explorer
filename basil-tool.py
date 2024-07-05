@@ -11,10 +11,10 @@ import shutil
 READELF_BIN=shutil.which("readelf")
 JAVA_BIN=shutil.which("java")
 BOOGIE_BIN=shutil.which("boogie")  # /root/.dotnet/tools/boogie
-BAP_BIN=shutil.which("bap-aslp")
+BAP_BIN=shutil.which("bap")
+BASIL_BIN=shutil.which("basil")
+# Broken
 MODEL_TOOL_BIN="/home/am/Documents/programming/2023/basil-tools/modelTool/bin/Debug/net6.0/linux-x64/modelTool"
-BASIL_JAR="/tmp/wptool-boogie-assembly-0.0.1.jar"
-BASIL_JAR="/target/scala-3.3.0/wptool-boogie-assembly-0.0.1.jar"
 
 DEFAULT_LOGGER_NAME = 'default_logger'
 
@@ -121,7 +121,7 @@ def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
     readelf_file = outputs['relf']
     os.chdir(tmp_dir) # so  the output file is in the right dir
     command = [JAVA_BIN, "-jar", BASIL_JAR]
-    files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il']
+    files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il', 'basilout.il']
 
     if spec:
         files += ["-s", spec]
