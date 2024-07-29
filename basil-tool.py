@@ -7,6 +7,8 @@ import os
 import sys
 import logging
 import shutil
+import sqlite3
+import time
 
 READELF_BIN=shutil.which("readelf")
 JAVA_BIN=shutil.which("java")
@@ -17,6 +19,10 @@ BASIL_BIN=shutil.which("basil")
 MODEL_TOOL_BIN="/home/am/Documents/programming/2023/basil-tools/modelTool/bin/Debug/net6.0/linux-x64/modelTool"
 
 DEFAULT_LOGGER_NAME = 'default_logger'
+
+JOB_TABLE = "create table if not exists jobs (job string, resultname string, resultfile string);"
+
+QUEUE_TABLE = "create table if not exists jclaimed (job string unique);"
 
 
 def get_tempdir(seed: str):
@@ -70,6 +76,13 @@ def read_write_binary(tmp_dir:str, filename: str) -> str:
 
 
 def run_bap_lift(tmp_dir: str, use_asli: bool):
+
+    job = f"baplift_asli:{use_asli}"
+    cached = get_cache(tmp_dir, job)
+    if ("adt" in cached and "bir" in cached):
+        logging.info(f"using cached: {cached}")
+        return cached
+
     logging.info("Bap")
     adtfile = f"{tmp_dir}/out.adt"
     birfile = f"{tmp_dir}/out.bir"
@@ -90,9 +103,16 @@ def run_bap_lift(tmp_dir: str, use_asli: bool):
         logging.info(res.stdout)
         logging.info(res.stderr)
 
-    return {"adt": adtfile, "bir": birfile, "default": birfile}
+    result = {"adt": adtfile, "bir": birfile, "default": birfile}
+    update_cache(tmp_dir, job, result)
+    return result
 
 def run_readelf(tmp_dir):
+    job = "readelf"
+    cached = get_cache(tmp_dir, job)
+    if ("relf" in cached) :
+        return cached
+
     logging.info("Readelf")
     command = [READELF_BIN, "-s", "-r", "-W", bin_name(tmp_dir)]
     res = subprocess.run(command, capture_output=True, check=True)
@@ -104,9 +124,16 @@ def run_readelf(tmp_dir):
     with open(readelf_file, "w") as f:
         f.write(res.stdout.decode('utf-8'))
 
-    return {"relf": readelf_file, "default": readelf_file}
+    result = {"relf": readelf_file, "default": readelf_file}
+    update_cache(tmp_dir, job, result)
+    return result
 
-def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
+def run_basil(tmp_dir: str, args: list = [], spec: str | None = None):
+    job = f"basil {args} {spec}"
+    cached = get_cache(tmp_dir, job)
+    if (len(cached) > 0) :
+        logging.info(f"using cached: {cached}")
+        return cached
     logging.info("Basil")
     boogie_file = f"{tmp_dir}/boogie_out.bpl"
     outputs = {"boogie": boogie_file, "basil-il": boogie_file + ".il"}
@@ -115,11 +142,12 @@ def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
     outputs.update(run_bap_lift(tmp_dir, False))
     outputs.update(run_readelf(tmp_dir))
     outputs["default"] = boogie_file
+    logging.info(f"run-basil  outputs {outputs}")
 
     adtfile = outputs['adt']
     birfile = outputs['bir']
     readelf_file = outputs['relf']
-    os.chdir(tmp_dir) # so  the output file is in the right dir
+    #os.chdir(tmp_dir) # so  the output file is in the right dir
     command = [BASIL_BIN]
     files = ["-i", adtfile, "-r", readelf_file, "-o", boogie_file, '--dump-il', outputs['basil-il']]
 
@@ -127,11 +155,13 @@ def run_basil(tmp_dir: str, args: list = [], spec: str | None =None):
         files += ["-s", spec]
         outputs["spec"] = spec
     command += files
-    logging.info(command)
+    logging.info(f"basil command {command}")
     res = subprocess.run(command, capture_output=True, check=False)
     logging.info(res.stdout.decode('utf-8'))
     logging.info(res.stderr.decode('utf-8'))
 
+    logging.info("finish basil")
+    update_cache(tmp_dir, job, outputs)
     return outputs
 
 
@@ -154,12 +184,11 @@ def run_boogie_only(tmp_dir: str, args: list = [], spec = None):
     res = subprocess.run(command, capture_output=True)
     logging.info(res.stdout.decode('utf-8'))
     logging.info(res.stderr.decode('utf-8'))
+    boogie_file = f"{tmp_dir}/out.boogie"
 
     output = {"boogie": boogie_file, "default": boogie_file}
     if "error" in res.stdout.decode('utf-8'):
         output.update({"counterexample_model": modelfile})
-
-    boogie_file = f"{tmp_dir}/out.boogie"
 
     with open(boogie_file, "w") as f:
         f.write(res.stderr.decode('utf-8'))
@@ -242,6 +271,62 @@ def cleanup_tempdirs():
     """
     return 0
 
+"""
+We assume the script is called from godbolt, so if the input files change we
+get a different input directory, hance a separate cache database.
+We don't checksum any input files etc for this reason.
+"""
+
+def has_cache(tmp_dir, job: str):
+    con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    cur = con.cursor()
+    res = cur.execute(f"SELECT EXISTS(SELECT resultfile FROM jobs WHERE job=\'${job}\');")
+    r = res.fetchone()[0]
+    logging.info(f"has cache {job} : {r}")
+    con.close()
+    return r
+
+
+def get_cache(tmp_dir, job: str):
+    con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    cur = con.cursor()
+
+    # get cached result
+    res = cur.execute(f"SELECT resultname, resultfile FROM jobs WHERE job=\'${job}\';")
+    r = res.fetchall()
+    r = {oname:ofile for (oname,ofile) in r}
+    logging.info(f"cached {job} : {r}")
+    return r
+
+    #def claim_job(tmp_dir, job: str):
+    #    try:
+    #        con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    #        cur = con.cursor()
+    #        res = cur.execute(f"INSERT INTO jclaimed values (?);", [job])
+    #        con.commit()
+    #        con.close()
+    #        return True
+    #    except:
+    #        return False
+    #
+    #
+    #
+    #def unclaim_job(tmp_dir, job: str):
+    #    con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    #    cur = con.cursor()
+    #    res = cur.execute(f"DELETE FROM jclaimed WHERE job=(?);", [job])
+    #    con.commit()
+    #    con.close()
+    #
+def update_cache(tmp_dir, job: str, res):
+    data = [(job, oname, ofile) for (oname, ofile) in res.items()]
+    logging.info(f"Update cache {job} : {res}")
+    con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    cur = con.cursor()
+    res = cur.executemany(f"INSERT INTO jobs values(?, ?, ?);", data)
+    con.commit()
+    con.close()
+
 def main(tmp_dir):
     parser = argparse.ArgumentParser(
                     prog='BasilTool',
@@ -255,15 +340,22 @@ def main(tmp_dir):
     parser.add_argument('-s', '--spec', help="Specfile for basil")
     parser.add_argument('-v', '--verbose', help="Enable log output", action="store_true")
 
-
     args = parser.parse_args()
-
     if args.verbose:
         logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
     else:
         logging.basicConfig(stream=sys.stderr, level=logging.ERROR)
 
+
+    #tmp_dir = get_tempdir(args.directory)
+
     logging.info(args)
+
+
+    con = sqlite3.connect(f"{tmp_dir}/cache.db")
+    con.execute(JOB_TABLE)
+    con.execute(QUEUE_TABLE)
+
 
     data = None
     with open(args.sourcefile, 'rb') as f:
@@ -272,6 +364,23 @@ def main(tmp_dir):
         f.write(data)
 
 
+    def copydirs(d = args.directory):
+        job = f"import {d}"
+        #claim_job(tmp_dir, job)
+        if has_cache(tmp_dir, job):
+            return
+        for p in os.listdir(d):
+            if os.path.isdir(p):
+                copydirs(os.path.join(d, p))
+            elif os.path.isfile(p):
+                with open(os.path.join(d,p), 'rb') as inf:
+                    ofname = os.path.join(tmp_dir, p)
+                    with open(ofname, 'wb') as of:
+                        of.write(inf.read())
+                    update_cache(tmp_dir, job, {ofname: ofname})
+                    logging.info(f"{p} -> {ofname}")
+        #unclaim_job(tmp_dir, job)
+    copydirs()
     # Copy spec
     spec = None
     if (args.spec):
@@ -279,7 +388,6 @@ def main(tmp_dir):
         specfile = None
         with open(os.path.join(args.directory, args.spec), 'r') as f:
             specfile = f.read()
-            #print(specfile)
         with open(spec, 'w') as f:
             f.write(specfile)
 
