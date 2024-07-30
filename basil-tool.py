@@ -280,7 +280,7 @@ We don't checksum any input files etc for this reason.
 def has_cache(tmp_dir, job: str):
     con = sqlite3.connect(f"{tmp_dir}/cache.db")
     cur = con.cursor()
-    res = cur.execute(f"SELECT EXISTS(SELECT resultfile FROM jobs WHERE job=\'${job}\');")
+    res = cur.execute(f"SELECT EXISTS(SELECT resultfile FROM jobs WHERE job=?);", [job])
     r = res.fetchone()[0]
     logging.info(f"has cache {job} : {r}")
     con.close()
@@ -292,7 +292,7 @@ def get_cache(tmp_dir, job: str):
     cur = con.cursor()
 
     # get cached result
-    res = cur.execute(f"SELECT resultname, resultfile FROM jobs WHERE job=\'${job}\';")
+    res = cur.execute(f"SELECT resultname, resultfile FROM jobs WHERE job=?", [job])
     r = res.fetchall()
     r = {oname:ofile for (oname,ofile) in r}
     logging.info(f"cached {job} : {r}")
